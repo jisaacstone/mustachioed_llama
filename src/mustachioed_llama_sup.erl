@@ -1,6 +1,5 @@
 %%%-------------------------------------------------------------------
-%% @doc mustachioed_llama top level supervisor.
-%% @end
+%% mustachioed_llama top level supervisor.
 %%%-------------------------------------------------------------------
 
 -module(mustachioed_llama_sup).

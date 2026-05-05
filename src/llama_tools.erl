@@ -1,4 +1,4 @@
-%% @doc Registry of available tools.
+%% Registry of available tools.
 %%
 %% To register a new tool, add its module to all/0.
 

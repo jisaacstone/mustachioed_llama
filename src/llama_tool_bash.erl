@@ -9,19 +9,19 @@
 -spec definition() -> llama_tool:tool_def().
 definition() ->
     #tool_def{
-        name        = <<"bash">>,
-        description = <<"Execute a bash command and return its output (stdout and stderr combined)">>,
+        name        = ~"bash",
+        description = ~"Execute a bash command and return its output (stdout and stderr combined)",
         parameters  = #{
-            <<"command">> => #param_spec{
-                type        = <<"string">>,
-                description = <<"The bash command to run">>
+            ~"command" => #param_spec{
+                type        = ~"string",
+                description = ~"The bash command to run"
             }
         },
-        required    = [<<"command">>]
+        required    = [~"command"]
     }.
 
 -spec execute(#{binary() => term()}) -> binary().
-execute(#{<<"command">> := Cmd}) ->
+execute(#{~"command" := Cmd}) ->
     Output = os:cmd(binary_to_list(Cmd) ++ " 2>&1"),
     list_to_binary(Output);
 execute(Args) ->

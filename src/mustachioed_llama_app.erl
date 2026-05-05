@@ -1,6 +1,5 @@
 %%%-------------------------------------------------------------------
-%% @doc mustachioed_llama public API
-%% @end
+%% mustachioed_llama public API
 %%%-------------------------------------------------------------------
 
 -module(mustachioed_llama_app).

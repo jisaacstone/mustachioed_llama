@@ -1,4 +1,4 @@
-%% @doc Behavior and shared types for tool definitions.
+%% Behavior and shared types for tool definitions.
 %%
 %% To add a new tool:
 %%   1. Create llama_tool_<name>.erl implementing this behavior.
@@ -38,12 +38,12 @@ to_ollama(#tool_def{name = Name, description = Desc,
         #{type => T, description => D}
     end, Params),
     #{
-        type     => <<"function">>,
+        type     => ~"function",
         function => #{
             name        => Name,
             description => Desc,
             parameters  => #{
-                type       => <<"object">>,
+                type       => ~"object",
                 properties => Properties,
                 required   => Required
             }

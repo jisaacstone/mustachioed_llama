@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%% @doc Stateful REPL for mustachioed_llama.
+%% Stateful REPL for mustachioed_llama.
 %%
 %% Runs an input loop in its own process. Each user message is sent to
 %% Ollama along with a rolling window of recent history, and the reply
@@ -11,7 +11,6 @@
 %%
 %% Override at launch:
 %%   erl ... -mustachioed_llama num_ctx 4096
-%% @end
 %%%-------------------------------------------------------------------
 
 -module(mustachioed_llama_repl).
@@ -61,7 +60,7 @@ init([]) ->
     {ok, #state{num_ctx = NumCtx, max_history = MaxHistory}}.
 
 handle_call({chat, Input}, _From, #state{messages = Msgs, num_ctx = NumCtx, max_history = MaxHistory} = State) ->
-    UserMsg = #{role => <<"user">>, content => list_to_binary(Input)},
+    UserMsg = #{role => ~"user", content => list_to_binary(Input)},
     History = Msgs ++ [UserMsg],
     Context = lists:nthtail(max(0, length(History) - MaxHistory), History),
     Opts = #{stream => false, options => #{num_ctx => NumCtx}, tools => llama_tools:definitions()},
@@ -117,12 +116,12 @@ loop() ->
 %% the final text reply and the updated full message list.
 do_chat(Messages, Opts) ->
     case guanco_app:generate_chat_completion(?MODEL, Messages, Opts) of
-        {ok, #{<<"message">> := #{<<"tool_calls">> := ToolCalls} = AssistantMsg}} ->
+        {ok, #{~"message" := #{~"tool_calls" := ToolCalls} = AssistantMsg}} ->
             %% Store the assistant turn (with tool_calls) then execute each tool.
             WithAssistant = Messages ++ [AssistantMsg],
-            ToolResultMsgs = lists:map(fun execute_tool_call/1, ToolCalls),
+            ToolResultMsgs = [execute_tool_call(TC) || TC <- ToolCalls],
             do_chat(WithAssistant ++ ToolResultMsgs, Opts);
-        {ok, #{<<"message">> := #{<<"content">> := Content} = AssistantMsg}} ->
+        {ok, #{~"message" := #{~"content" := Content} = AssistantMsg}} ->
             {ok, Content, Messages ++ [AssistantMsg]};
         {ok, Other} ->
             {error, {unexpected_response, Other}};
@@ -130,14 +129,14 @@ do_chat(Messages, Opts) ->
             {error, Reason}
     end.
 
-execute_tool_call(#{<<"function">> := #{<<"name">> := Name, <<"arguments">> := Args}}) ->
+execute_tool_call(#{~"function" := #{~"name" := Name, ~"arguments" := Args}}) ->
     io:format("[tool:~s] ~p~n", [Name, Args]),
     Result = llama_tools:execute(Name, Args),
     io:format("[tool:~s result]~n~s~n", [Name, Result]),
-    #{role => <<"tool">>, content => Result};
+    #{role => ~"tool", content => Result};
 execute_tool_call(Other) ->
     io:format("[tool] unexpected call format: ~p~n", [Other]),
-    #{role => <<"tool">>, content => <<"error: unrecognised tool call format">>}.
+    #{role => ~"tool", content => ~"error: unrecognised tool call format"}.
 
 shutdown() ->
     io:format("Shutting down.~n"),
