@@ -21,6 +21,10 @@ init([]) ->
         intensity => 5,
         period => 1
     },
+    Mode = case init:get_argument(ask) of
+        {ok, [[Question | _]]} -> {one_shot, Question};
+        error -> application:get_env(mustachioed_llama, repl_mode, stdio)
+    end,
     ChildSpecs = [
         #{
             id      => lsp_client,
@@ -32,8 +36,7 @@ init([]) ->
         },
         #{
             id      => mustachioed_llama_repl,
-            start   => {mustachioed_llama_repl, start_link,
-                        [application:get_env(mustachioed_llama, repl_mode, stdio)]},
+            start   => {mustachioed_llama_repl, start_link, [Mode]},
             restart => permanent,
             shutdown => 5000,
             type    => worker,

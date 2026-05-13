@@ -10,11 +10,11 @@
 definition() ->
     #tool_def{
         name        = ~"lsp_read",
-        description = ~"Look up an Erlang symbol by name using ELP. Returns its file location and a source snippet.",
+        description = ~"Look up an Erlang symbol by name using ELP. Returns its file location and a source snippet. Use 'module:function' format to look up a function (e.g. 'mustachioed_llama_repl:do_chat'). Use a bare module name to look up a module (e.g. 'lsp_client').",
         parameters  = #{
             ~"symbol" => #param_spec{
                 type        = ~"string",
-                description = ~"The symbol name to look up (e.g. a function or module name)"
+                description = ~"Symbol to look up. For functions: 'module:function' (e.g. 'mustachioed_llama_repl:do_chat'). For modules: bare module name (e.g. 'lsp_client')."
             }
         },
         required    = [~"symbol"]

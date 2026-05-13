@@ -5,6 +5,7 @@
 main(_Args) ->
     {ok, _} = application:ensure_all_started(hackney),
     {ok, _} = application:ensure_all_started(guanco),
+    {ok, _} = lsp_client:start_link(),
     {ok, _} = mustachioed_llama_repl:start_link(headless),
 
     io:format("Sending: Hello! Who are you?~n~n"),

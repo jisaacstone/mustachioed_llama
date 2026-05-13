@@ -108,13 +108,27 @@ handle_call(Request, From, #state{status = initializing, queue = Q} = State) ->
 
 handle_call({symbol_lookup, Name}, From,
             #state{port = Port, next_id = Id, pending = P} = State) ->
-    Msg = #{jsonrpc => ~"2.0",
-            id      => Id,
-            method  => ~"workspace/symbol",
-            params  => #{query => Name}},
-    port_command(Port, frame(Msg)),
-    {noreply, State#state{next_id = Id + 1,
-                          pending = P#{Id => {From, symbol_lookup}}}};
+    case binary:split(Name, <<":">>) of
+        [Module, Function] ->
+            %% Qualified module:function — find the module file via workspace/symbol,
+            %% then locate the function via textDocument/documentSymbol.
+            Msg = #{jsonrpc => ~"2.0",
+                    id      => Id,
+                    method  => ~"workspace/symbol",
+                    params  => #{query => Module}},
+            port_command(Port, frame(Msg)),
+            {noreply, State#state{next_id = Id + 1,
+                                  pending = P#{Id => {From, {function_in_module, Function}}}}};
+        [_] ->
+            %% Unqualified — workspace/symbol directly (works for module names).
+            Msg = #{jsonrpc => ~"2.0",
+                    id      => Id,
+                    method  => ~"workspace/symbol",
+                    params  => #{query => Name}},
+            port_command(Port, frame(Msg)),
+            {noreply, State#state{next_id = Id + 1,
+                                  pending = P#{Id => {From, symbol_lookup}}}}
+    end;
 
 handle_call({apply_edit, Path, SL, SC, EL, EC, NewText}, From,
             #state{port = Port, next_id = Id,
@@ -223,6 +237,11 @@ handle_message(#{~"id" := Id, ~"result" := Result},
         {{From, symbol_lookup}, NewP} ->
             gen_server:reply(From, format_symbol_result(Result)),
             State#state{pending = NewP};
+        {{From, {function_in_module, Function}}, NewP} ->
+            handle_module_symbol_result(Result, Function, From, State#state{pending = NewP});
+        {{From, {doc_symbol_search, Function, URI}}, NewP} ->
+            gen_server:reply(From, find_function_in_doc_symbols(Result, Function, URI)),
+            State#state{pending = NewP};
         {{From, _}, NewP} ->
             gen_server:reply(From, {ok, Result}),
             State#state{pending = NewP};
@@ -291,6 +310,72 @@ format_symbol_result([First | _]) ->
     Path    = uri_to_path(URI),
     Snippet = read_snippet(Path, Line),
     {ok, #{uri => URI, line => Line + 1, snippet => Snippet}}.
+
+%% Step 2 of qualified lookup: got the module file, now request documentSymbol.
+handle_module_symbol_result(null, _, From, State) ->
+    gen_server:reply(From, {error, not_found}), State;
+handle_module_symbol_result([], _, From, State) ->
+    gen_server:reply(From, {error, not_found}), State;
+handle_module_symbol_result([#{~"location" := #{~"uri" := URI}} | _], Function, From,
+                             #state{port = Port, next_id = Id, pending = P,
+                                    open_uris = OU} = State) ->
+    NewOU = case sets:is_element(URI, OU) of
+        false ->
+            Path = uri_to_path(URI),
+            case file:read_file(Path) of
+                {ok, Content} ->
+                    port_command(Port, frame(#{jsonrpc => ~"2.0",
+                                               method  => ~"textDocument/didOpen",
+                                               params  => #{textDocument => #{
+                                                   uri        => URI,
+                                                   languageId => ~"erlang",
+                                                   version    => 1,
+                                                   text       => Content
+                                               }}}));
+                {error, _} -> ok
+            end,
+            sets:add_element(URI, OU);
+        true ->
+            OU
+    end,
+    Msg = #{jsonrpc => ~"2.0",
+            id      => Id,
+            method  => ~"textDocument/documentSymbol",
+            params  => #{textDocument => #{uri => URI}}},
+    port_command(Port, frame(Msg)),
+    State#state{next_id   = Id + 1,
+                pending   = P#{Id => {From, {doc_symbol_search, Function, URI}}},
+                open_uris = NewOU}.
+
+%% Search a (possibly hierarchical) DocumentSymbol list for a function by name.
+%% ELP names functions as "name/arity", so "do_chat" matches "do_chat/2".
+find_function_in_doc_symbols(null, _, _)  -> {error, not_found};
+find_function_in_doc_symbols([], _, _)    -> {error, not_found};
+find_function_in_doc_symbols(Syms, Func, URI) when is_list(Syms) ->
+    Path = uri_to_path(URI),
+    Flat = flatten_doc_symbols(Syms),
+    case [S || S <- Flat, function_name_match(maps:get(~"name", S, <<>>), Func)] of
+        [] ->
+            {error, not_found};
+        [First | _] ->
+            Range  = maps:get(~"selectionRange", First, maps:get(~"range", First, #{})),
+            Line   = maps:get(~"line", maps:get(~"start", Range, #{}), 0),
+            {ok, #{uri => URI, line => Line + 1, snippet => read_snippet(Path, Line)}}
+    end.
+
+%% Flatten hierarchical DocumentSymbol trees (children field) into a flat list.
+flatten_doc_symbols([]) -> [];
+flatten_doc_symbols([S | Rest]) ->
+    Children = maps:get(~"children", S, []),
+    [S | flatten_doc_symbols(Children)] ++ flatten_doc_symbols(Rest).
+
+%% Match ELP's "name/arity" symbol names against a bare function name query.
+function_name_match(SymName, QueryName) ->
+    QLen = byte_size(QueryName),
+    case SymName of
+        <<Pfx:QLen/binary, $/, _/binary>> -> Pfx =:= QueryName;
+        _                                 -> SymName =:= QueryName
+    end.
 
 read_snippet(Path, Line) ->
     case file:read_file(Path) of

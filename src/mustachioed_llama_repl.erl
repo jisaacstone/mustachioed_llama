@@ -29,7 +29,7 @@
 -export([loop/1]).
 
 -define(SERVER, ?MODULE).
--define(MODEL, <<"llama3.2">>).
+-define(DEFAULT_MODEL,      <<"llama3.2">>).
 -define(DEFAULT_NUM_CTX,     1024).
 -define(DEFAULT_MAX_HISTORY, 20).
 
@@ -41,6 +41,7 @@
 
 -record(state, {
     messages    = [] :: [map()],
+    model            :: binary(),
     num_ctx          :: pos_integer(),
     max_history      :: pos_integer()
 }).
@@ -52,7 +53,7 @@
 start_link() ->
     start_link(stdio).
 
-%% Mode can be: stdio | headless | {pid, Pid} | io_backend()
+%% Mode can be: stdio | headless | {one_shot, string()} | {pid, Pid} | io_backend()
 start_link(Mode) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [Mode], []).
 
@@ -67,20 +68,22 @@ get_messages() ->
 %%--------------------------------------------------------------------
 
 init([Mode]) ->
+    Model      = iolist_to_binary([application:get_env(mustachioed_llama, model,      ?DEFAULT_MODEL)]),
     NumCtx     = application:get_env(mustachioed_llama, num_ctx,     ?DEFAULT_NUM_CTX),
     MaxHistory = application:get_env(mustachioed_llama, max_history, ?DEFAULT_MAX_HISTORY),
     case io_backend(Mode) of
         undefined -> ok;
         Backend   -> spawn_link(?MODULE, loop, [Backend])
     end,
-    {ok, #state{num_ctx = NumCtx, max_history = MaxHistory}}.
+    {ok, #state{model = Model, num_ctx = NumCtx, max_history = MaxHistory}}.
 
-handle_call({chat, Input}, _From, #state{messages = Msgs, num_ctx = NumCtx, max_history = MaxHistory} = State) ->
+handle_call({chat, Input}, _From, #state{messages = Msgs, model = Model,
+                                          num_ctx = NumCtx, max_history = MaxHistory} = State) ->
     UserMsg = #{role => ~"user", content => list_to_binary(Input)},
     History = Msgs ++ [UserMsg],
     Context = lists:nthtail(max(0, length(History) - MaxHistory), History),
     Opts = #{stream => false, options => #{num_ctx => NumCtx}, tools => llama_tools:definitions()},
-    case do_chat(Context, Opts) of
+    case do_chat(Model, Context, Opts) of
         {ok, FinalContent, FinalMsgs} ->
             {reply, {ok, FinalContent}, State#state{messages = FinalMsgs}};
         {error, Reason} ->
@@ -103,6 +106,16 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 %%--------------------------------------------------------------------
 
 -spec io_backend(stdio | headless | {pid, pid()} | io_backend()) -> io_backend() | undefined.
+io_backend({one_shot, Question}) ->
+    #{
+        read  => fun() ->
+            case get(one_shot_asked) of
+                true      -> eof;
+                undefined -> put(one_shot_asked, true), {ok, Question}
+            end
+        end,
+        write => fun(Output) -> io:format("~s~n", [Output]) end
+    };
 io_backend(headless) ->
     undefined;
 io_backend(stdio) ->
@@ -155,12 +168,12 @@ loop(#{read := Read, write := Write} = IO) ->
 %% Internal helpers
 %%--------------------------------------------------------------------
 
-do_chat(Messages, Opts) ->
-    case guanco_app:generate_chat_completion(?MODEL, Messages, Opts) of
+do_chat(Model, Messages, Opts) ->
+    case guanco_app:generate_chat_completion(Model, Messages, Opts) of
         {ok, #{~"message" := #{~"tool_calls" := ToolCalls} = AssistantMsg}} ->
             WithAssistant = Messages ++ [AssistantMsg],
             ToolResultMsgs = [execute_tool_call(TC) || TC <- ToolCalls],
-            do_chat(WithAssistant ++ ToolResultMsgs, Opts);
+            do_chat(Model, WithAssistant ++ ToolResultMsgs, Opts);
         {ok, #{~"message" := #{~"content" := Content} = AssistantMsg}} ->
             {ok, Content, Messages ++ [AssistantMsg]};
         {ok, Other} ->
