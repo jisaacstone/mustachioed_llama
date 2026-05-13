@@ -5,6 +5,10 @@
 %% Ollama along with a rolling window of recent history, and the reply
 %% is printed and appended to the history.
 %%
+%% The I/O source is pluggable via an io_backend(). Two backends are
+%% provided: stdio (default) and pid (message-passing). Custom backends
+%% can be passed directly to start_link/1.
+%%
 %% Configuration (sys.config):
 %%   {mustachioed_llama, [{num_ctx, N}]}       -- Ollama context length in tokens (default 1024)
 %%   {mustachioed_llama, [{max_history, N}]}   -- rolling window of messages in chat history (default 20)
@@ -17,17 +21,23 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, chat/1, get_messages/0]).
+-export([start_link/0, start_link/1, chat/1, get_messages/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--export([loop/0]).
+-export([loop/1]).
 
 -define(SERVER, ?MODULE).
 -define(MODEL, <<"llama3.2">>).
 -define(DEFAULT_NUM_CTX,     1024).
 -define(DEFAULT_MAX_HISTORY, 20).
+
+%% An I/O backend: read/0 returns the next user input, write/1 delivers output.
+-type io_backend() :: #{
+    read  := fun(() -> {ok, string()} | eof | {error, term()}),
+    write := fun((iodata()) -> ok)
+}.
 
 -record(state, {
     messages    = [] :: [map()],
@@ -40,9 +50,12 @@
 %%--------------------------------------------------------------------
 
 start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    start_link(stdio).
 
-%% Send a user message, get the assistant reply back.
+%% Mode can be: stdio | headless | {pid, Pid} | io_backend()
+start_link(Mode) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [Mode], []).
+
 chat(Input) ->
     gen_server:call(?SERVER, {chat, Input}, 60000).
 
@@ -53,10 +66,13 @@ get_messages() ->
 %% gen_server callbacks
 %%--------------------------------------------------------------------
 
-init([]) ->
-    NumCtx     = application:get_env(mustachioed_llama, num_ctx,      ?DEFAULT_NUM_CTX),
-    MaxHistory = application:get_env(mustachioed_llama, max_history,  ?DEFAULT_MAX_HISTORY),
-    spawn_link(?MODULE, loop, []),
+init([Mode]) ->
+    NumCtx     = application:get_env(mustachioed_llama, num_ctx,     ?DEFAULT_NUM_CTX),
+    MaxHistory = application:get_env(mustachioed_llama, max_history, ?DEFAULT_MAX_HISTORY),
+    case io_backend(Mode) of
+        undefined -> ok;
+        Backend   -> spawn_link(?MODULE, loop, [Backend])
+    end,
     {ok, #state{num_ctx = NumCtx, max_history = MaxHistory}}.
 
 handle_call({chat, Input}, _From, #state{messages = Msgs, num_ctx = NumCtx, max_history = MaxHistory} = State) ->
@@ -77,47 +93,71 @@ handle_call(get_messages, _From, #state{messages = Msgs} = State) ->
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
-handle_cast(_Msg, State)     -> {noreply, State}.
-handle_info(_Info, State)    -> {noreply, State}.
-terminate(_Reason, _State)   -> ok.
+handle_cast(_Msg, State)            -> {noreply, State}.
+handle_info(_Info, State)           -> {noreply, State}.
+terminate(_Reason, _State)          -> ok.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 %%--------------------------------------------------------------------
-%% REPL input loop
+%% I/O backends
 %%--------------------------------------------------------------------
 
-loop() ->
-    case io:get_line(">> ") of
-        eof             -> shutdown();
-        {error, _}      -> shutdown();
-        Line ->
-            Input = string:trim(Line, trailing, "\n\r"),
-            case Input of
-                "exit" ->
-                    shutdown();
-                "" ->
-                    loop();
-                _ ->
-                    case chat(Input) of
-                        {ok, Reply} ->
-                            io:format("~s~n~n", [Reply]);
-                        {error, Reason} ->
-                            io:format("[error] ~p~n~n", [Reason])
-                    end,
-                    loop()
+-spec io_backend(stdio | headless | {pid, pid()} | io_backend()) -> io_backend() | undefined.
+io_backend(headless) ->
+    undefined;
+io_backend(stdio) ->
+    #{
+        read  => fun() ->
+            case io:get_line(">> ") of
+                eof        -> eof;
+                {error, R} -> {error, R};
+                Line       -> {ok, string:trim(Line, trailing, "\n\r")}
             end
+        end,
+        write => fun(Output) -> io:format("~s~n~n", [Output]) end
+    };
+io_backend({pid, Pid}) ->
+    #{
+        read  => fun() ->
+            Pid ! {repl_prompt, self()},
+            receive
+                {repl_input, Input} -> {ok, Input};
+                repl_eof            -> eof
+            after 300000 -> eof
+            end
+        end,
+        write => fun(Output) -> Pid ! {repl_output, Output}, ok end
+    };
+io_backend(Backend) when is_map(Backend) ->
+    Backend.
+
+%%--------------------------------------------------------------------
+%% Input loop
+%%--------------------------------------------------------------------
+
+-spec loop(io_backend()) -> no_return().
+loop(#{read := Read, write := Write} = IO) ->
+    case Read() of
+        eof        -> shutdown();
+        {error, _} -> shutdown();
+        {ok, ""}   -> loop(IO);
+        {ok, "exit"} -> shutdown();
+        {ok, Input}  ->
+            Output = case chat(Input) of
+                {ok, Reply}     -> Reply;
+                {error, Reason} -> io_lib:format("[error] ~p", [Reason])
+            end,
+            Write(Output),
+            loop(IO)
     end.
 
 %%--------------------------------------------------------------------
 %% Internal helpers
 %%--------------------------------------------------------------------
 
-%% Calls Ollama and loops if it responds with tool calls, returning
-%% the final text reply and the updated full message list.
 do_chat(Messages, Opts) ->
     case guanco_app:generate_chat_completion(?MODEL, Messages, Opts) of
         {ok, #{~"message" := #{~"tool_calls" := ToolCalls} = AssistantMsg}} ->
-            %% Store the assistant turn (with tool_calls) then execute each tool.
             WithAssistant = Messages ++ [AssistantMsg],
             ToolResultMsgs = [execute_tool_call(TC) || TC <- ToolCalls],
             do_chat(WithAssistant ++ ToolResultMsgs, Opts);

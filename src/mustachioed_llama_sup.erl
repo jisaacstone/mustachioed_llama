@@ -17,14 +17,23 @@ start_link() ->
 
 init([]) ->
     SupFlags = #{
-        strategy => one_for_all,
+        strategy => one_for_one,
         intensity => 5,
         period => 1
     },
     ChildSpecs = [
         #{
+            id      => lsp_client,
+            start   => {lsp_client, start_link, []},
+            restart => permanent,
+            shutdown => 5000,
+            type    => worker,
+            modules => [lsp_client]
+        },
+        #{
             id      => mustachioed_llama_repl,
-            start   => {mustachioed_llama_repl, start_link, []},
+            start   => {mustachioed_llama_repl, start_link,
+                        [application:get_env(mustachioed_llama, repl_mode, stdio)]},
             restart => permanent,
             shutdown => 5000,
             type    => worker,

@@ -11,7 +11,7 @@
 %% The list of all tool modules (each implements the llama_tool behaviour).
 -spec all() -> [module()].
 all() ->
-    [llama_tool_bash].
+    [llama_tool_bash, llama_tool_lsp_read, llama_tool_lsp_write].
 
 %% Returns Ollama-format tool definitions for every registered tool.
 -spec definitions() -> [map()].
