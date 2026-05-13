@@ -1,7 +1,7 @@
-testapp
+mustachioed_llama
 =====
 
-An OTP application
+Local ollama agent hooked into erlang lsp
 
 Build
 -----

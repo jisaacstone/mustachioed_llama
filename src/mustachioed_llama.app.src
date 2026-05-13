@@ -6,6 +6,9 @@
     {applications, [
         kernel,
         stdlib,
+        sasl,
+        inets,
+        hackney,
         guanco
     ]},
     {env, []},

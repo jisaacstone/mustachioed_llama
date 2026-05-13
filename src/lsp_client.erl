@@ -17,7 +17,7 @@
 -define(DIAG_TIMEOUT, 10000).
 
 -record(state, {
-    port         :: port(),
+    port         :: port() | nil,
     buffer       = <<>>        :: binary(),
     next_id      = 1           :: integer(),
     %% initializing: waiting for initialize response
@@ -61,18 +61,19 @@ uri_to_path(Other)                       -> Other.
 %%--------------------------------------------------------------------
 
 init([]) ->
-    ElpName = application:get_env(mustachioed_llama, elp_path, "elp"),
+    ElpName = application:get_env('mustachioed_llama', elp_path, "elp"),
     case os:find_executable(ElpName) of
         false ->
-            logger:warning("lsp_client: elp not found (~s), LSP tools unavailable", [ElpName]),
-            {ok, #state{status    = unavailable,
-                        open_uris = sets:new(),
+            logger:warning("lsp_client: elp (~s) not found (~s), LSP tools unavailable", [ElpName, os:getenv("PATH")]),
+            {ok, #state{port      = nil,
+                        status    = unavailable,
+                        open_uris = sets:new([{version, 2}]),
                         queue     = queue:new()}};
         ElpPath ->
             Port = open_port({spawn_executable, ElpPath},
                              [{args, ["server"]}, binary, use_stdio, exit_status]),
             {ok, #state{port      = Port,
-                        open_uris = sets:new(),
+                        open_uris = sets:new([{version, 2}]),
                         queue     = queue:new()},
              {continue, initialize}}
     end.
@@ -108,7 +109,7 @@ handle_call(Request, From, #state{status = initializing, queue = Q} = State) ->
 
 handle_call({symbol_lookup, Name}, From,
             #state{port = Port, next_id = Id, pending = P} = State) ->
-    case binary:split(Name, <<":">>) of
+    case binary:split(Name, ~B[":"]) of
         [Module, Function] ->
             %% Qualified module:function — find the module file via workspace/symbol,
             %% then locate the function via textDocument/documentSymbol.
