@@ -68,9 +68,18 @@ get_messages() ->
 %%--------------------------------------------------------------------
 
 init([Mode]) ->
-    Model      = iolist_to_binary([application:get_env(mustachioed_llama, model,      ?DEFAULT_MODEL)]),
-    NumCtx     = application:get_env(mustachioed_llama, num_ctx,     ?DEFAULT_NUM_CTX),
-    MaxHistory = application:get_env(mustachioed_llama, max_history, ?DEFAULT_MAX_HISTORY),
+    Model = case application:get_env(mustachioed_llama, model) of
+        M when is_list(M) -> iolist_to_binary(M);
+        _ -> ?DEFAULT_MODEL
+    end,
+    NumCtx = case application:get_env(mustachioed_llama, num_ctx) of
+        N when is_number(N) -> N;
+        _ -> ?DEFAULT_NUM_CTX
+    end,
+    MaxHistory = case application:get_env(mustachioed_llama, max_history) of
+        H when is_number(H) -> H;
+        _ -> ?DEFAULT_MAX_HISTORY
+    end,
     case io_backend(Mode) of
         undefined -> ok;
         Backend   -> spawn_link(?MODULE, loop, [Backend])

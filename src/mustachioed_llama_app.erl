@@ -6,6 +6,8 @@
 
 -behaviour(application).
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
@@ -19,10 +21,9 @@ start(_StartType, _StartArgs) ->
     Host = application:get_env(mustachioed_llama, host, "localhost"),
     Port = application:get_env(mustachioed_llama, port, 11434),
     Url = lists:flatten(io_lib:format("http://~s:~w", [Host, Port])),
+    ?LOG_INFO("Starting mustachioed_llama with url ~s, dir ~s, path ~s", [Url, file:get_cwd(), os:getenv("PATH")]),
     application:set_env(guanco, ollama_api_url, Url),
     mustachioed_llama_sup:start_link().
 
 stop(_State) ->
     ok.
-
-%% internal functions

@@ -21,8 +21,8 @@ definition() ->
     }.
 
 -spec execute(#{binary() => term()}) -> binary().
-execute(#{~"command" := Cmd}) ->
+execute(#{~"command" := Cmd}) when is_binary(Cmd) ->
     Output = os:cmd(binary_to_list(Cmd) ++ " 2>&1"),
     list_to_binary(Output);
 execute(Args) ->
-    iolist_to_binary(io_lib:format("error: missing 'command' argument, got: ~p", [Args])).
+    iolist_to_binary(io_lib:format("error: missing binary 'command' argument, got: ~p", [Args])).

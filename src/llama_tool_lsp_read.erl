@@ -21,7 +21,7 @@ definition() ->
     }.
 
 -spec execute(#{binary() => term()}) -> binary().
-execute(#{~"symbol" := Symbol}) ->
+execute(#{~"symbol" := Symbol}) when is_binary(Symbol) ->
     case lsp_client:symbol_lookup(Symbol) of
         {ok, #{uri := URI, line := Line, snippet := Snippet}} ->
             Path = lsp_client:uri_to_path(URI),
@@ -32,4 +32,4 @@ execute(#{~"symbol" := Symbol}) ->
             iolist_to_binary(io_lib:format("Error: ~p", [Reason]))
     end;
 execute(Args) ->
-    iolist_to_binary(io_lib:format("error: missing 'symbol' argument, got: ~p", [Args])).
+    iolist_to_binary(io_lib:format("error: missing binary 'symbol' argument, got: ~p", [Args])).

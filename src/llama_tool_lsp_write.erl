@@ -29,7 +29,7 @@ execute(#{~"path"       := Path,
           ~"start_char" := SC,
           ~"end_line"   := EL,
           ~"end_char"   := EC,
-          ~"new_text"   := NewText}) ->
+          ~"new_text"   := NewText}) when is_binary(Path), is_number(SL), is_number(SC), is_number(EL), is_number(EC), is_binary(NewText) ->
     case lsp_client:apply_edit(Path, SL, SC, EL, EC, NewText) of
         {ok, []} ->
             ~"Edit applied successfully. No diagnostics.";
